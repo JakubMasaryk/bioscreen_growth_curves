@@ -1,7 +1,4 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-# In[221]:
+# In[1002]:
 
 
 import numpy as np
@@ -9,11 +6,12 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy import stats
+from scipy.stats import ttest_ind
 
 
 # __Params__
 
-# In[223]:
+# In[1004]:
 
 
 plt.rcParams["legend.frameon"] = False
@@ -34,7 +32,7 @@ plt.rcParams['figure.dpi'] = 1000
 
 # * __data processing__
 
-# In[226]:
+# In[1007]:
 
 
 #data load (from specified path) and basic processing
@@ -114,10 +112,16 @@ def final_dataset(repeat1_data, repeat2_data, repeat3_data):
     
     return data
 
+#in case the machine misses a timepoint/s (corresponding timepoint/s from other repeats dropped as well)
+def drop_timepoints(data, start, end):
+    data= data.loc[(data.Hours<start) |
+                   (data.Hours>end)]
+    return data
+
 
 # * __statistics functions__
 
-# In[228]:
+# In[1009]:
 
 
 #margin of error: t-distribution, CL 95%, confidence intervals: mean +/- margin of error
@@ -132,10 +136,129 @@ def t_margin_of_error_cl95(data):
     t_margin_of_error = t_score * std_err
     return t_margin_of_error
 
+#t-test: independent (two sample), assumes equal variance (by default), two-tailed
+def single_t_test(column1, column2):
+    #ttest
+    t_stat, p_value = ttest_ind(column1, column2)
+    
+    return p_value
+
+#calculates slopes for each growth curves within defined timerange, each biological repeat and ttest against wt control
+#applied on the exponential phase, app. 10-20 h of growth
+def exp_phase_slopes(data, as_concentration, timepoint1, timepoint2, p_value_threshold):  
+    #filter by timpoints, select needed columns
+    data= data.loc[(data.Hours >= timepoint1) & 
+                   (data.Hours <= timepoint2) &
+                   (data.AsConcentration == as_concentration),
+                   ['Strain', 'Hours', 'OD600']]
+    
+    #split the repeats to a separate columns
+    data= data.assign(rep1= data.OD600.apply(lambda x: x[0]),
+                      rep2= data.OD600.apply(lambda x: x[1]),
+                      rep3= data.OD600.apply(lambda x: x[2]))
+    
+    #fill potential NaNs by the average of the other two columns
+    data= data.assign(rep1= data.rep1.fillna(data.loc[:, ['rep2', 'rep3']].mean(axis= 1)),
+                      rep2= data.rep2.fillna(data.loc[:, ['rep1', 'rep3']].mean(axis= 1)),
+                      rep3= data.rep3.fillna(data.loc[:, ['rep1', 'rep2']].mean(axis= 1)))
+    
+    #empty dataframe for slopes
+    slopes= pd.DataFrame(columns= ['strain', 'slope_repeat1', 'slope_repeat2', 'slope_repeat3'])
+    
+    #calculate slope for each strain-repeat, append to the 'slope' df
+    for strain in data.Strain.unique():
+        slope_data = data[data.Strain== strain]
+        
+        x=  np.array((slope_data.Hours).astype('float32'))
+        y1= np.array((slope_data.rep1).astype('float32'))
+        y2= np.array((slope_data.rep2).astype('float32'))
+        y3= np.array((slope_data.rep3).astype('float32'))
+        
+        slope1, intercept1 = np.polyfit(x, y1, 1)
+        slope2, intercept2 = np.polyfit(x, y2, 1)
+        slope3, intercept3 = np.polyfit(x, y3, 1)
+        
+        new_row= pd.DataFrame([{'strain':strain, 'slope_repeat1':slope1, 'slope_repeat2':slope2, 'slope_repeat3':slope3}])   
+        slopes= pd.concat([slopes, new_row], axis= 0)
+    
+    ##statistics
+    #concat slopes into lists (input into ttest function)
+    slopes= slopes.assign(slope= slopes.loc[:, ['slope_repeat1', 'slope_repeat2', 'slope_repeat3']].mean(axis= 1),
+                          slopes= slopes.loc[:, ['slope_repeat1', 'slope_repeat2', 'slope_repeat3']].values.tolist())
+    
+    #separate control and mutant slope-data
+    ctrl= slopes.loc[slopes.strain== 'wt control']  
+    ctrl.columns= ['strain', 'slope_repeat1', 'slope_repeat2', 'slope_repeat3', 'slope', 'control_slopes']
+    mut= slopes.loc[slopes.strain!= 'wt control']
+    
+    #merge the control data to each mutant
+    final_dataset= mut.merge(ctrl.loc[:, 'control_slopes'], how= 'left', left_index= True, right_index= True)
+    
+    #t test
+    final_dataset= final_dataset.assign(p_value= round(final_dataset.apply(lambda x: single_t_test(x['slopes'], x['control_slopes']), axis= 1), 6))
+    
+    #significance
+    final_dataset= final_dataset.assign(significance= np.where(final_dataset.p_value < p_value_threshold, '*', ''))
+    
+    #filtering down to needed columns
+    final_dataset= final_dataset.loc[:, ['strain', 'slope', 'p_value', 'significance']]
+    
+    #concat back the control
+    ctrl= ctrl.loc[:, ['strain', 'slope']]
+    ctrl= ctrl.assign(p_value= 0,
+                      significance= '-')
+    
+    final_dataset= pd.concat([ctrl, final_dataset], axis= 0)
+    
+    return final_dataset.reset_index(drop= True)
+
+
+# median_value = np.nanmedian(a)
+# a_filled = np.where(np.isnan(a), median_value, a)
+
+#compares OD wt control vs. mutant in a selected timepoint (ttest, 3 repeats)
+#applied on a timepoint in the stationary phase, app. 48h
+def stat_phase_OD(data, as_concentration, timepoint, p_value_threshold): 
+    #filter by timpoint, select needed columns
+    data= data.loc[(data.Hours == timepoint) &
+                   (data.AsConcentration == as_concentration),
+                   ['Strain', 'Hours', 'OD600']]
+    
+    #filling potential with the mean of the others
+    data=data.assign(OD600= data.OD600.apply(lambda x: np.where(np.isnan(np.array(x)), np.mean(np.array(x)[~np.isnan(np.array(x))]),np.array(x))))
+    
+    #split control and mutant data
+    ctrl= data.loc[data.Strain=='wt control']
+    ctrl.columns= ['Strain', 'Hours', 'OD600_control']
+    mut= data.loc[data.Strain!='wt control']
+    
+    #average the OD600 from the repeats
+    #assign control data to each mutant
+    mut= mut.assign(OD= mut.loc[:, 'OD600'].apply(lambda x: np.array(x).mean()))
+    mut= mut.merge(ctrl.loc[:, ['Hours', 'OD600_control']], how= 'left', on= 'Hours')
+    
+    #ttest
+    mut=mut.assign(p_value= mut.apply(lambda x: single_t_test(x['OD600'], x['OD600_control']), axis= 1))
+    mut= mut.assign(significance= np.where(mut.p_value < p_value_threshold, '*', ''))
+    
+    #filter down to needed columns
+    mut= mut.loc[:, ['Strain', 'OD', 'p_value', 'significance']]
+    
+    #formatting control data
+    ctrl= ctrl.assign(OD= ctrl.OD600_control.apply(lambda x: np.array(x).mean()),
+                      p_value= 0,
+                      significance= '-')
+    ctrl= ctrl.loc[:, ['Strain', 'OD', 'p_value', 'significance']]
+    
+    #concat control and mutant data- final dataset
+    final_dataset= pd.concat([ctrl, mut], axis= 0)
+    
+    return final_dataset.reset_index(drop= True)
+
 
 # * __visualisation__
 
-# In[230]:
+# In[1011]:
 
 
 #visualisation of all technical repeats for each strain-condition (for single biological repeat)
@@ -322,7 +445,3 @@ def growth_curves_highlighted_mutants(data, as_concentration, selected_mutants, 
         pass;
     else:
         raise ValueError(f"Invalid export argument: '{export}'. Expected: boolean ('True' or 'False').")
-
-
-# ------------------------------------------------------------------------
-
