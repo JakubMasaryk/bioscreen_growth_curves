@@ -1,9 +1,10 @@
-# In[1002]:
+# In[447]:
 
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
 import seaborn as sns
 from scipy import stats
 from scipy.stats import ttest_ind
@@ -11,7 +12,7 @@ from scipy.stats import ttest_ind
 
 # __Params__
 
-# In[1004]:
+# In[449]:
 
 
 plt.rcParams["legend.frameon"] = False
@@ -32,7 +33,7 @@ plt.rcParams['figure.dpi'] = 1000
 
 # * __data processing__
 
-# In[1007]:
+# In[452]:
 
 
 #data load (from specified path) and basic processing
@@ -110,6 +111,9 @@ def final_dataset(repeat1_data, repeat2_data, repeat3_data):
     muta_data_ordered= muta_data_ordered.sort_values(['Strain', 'AsConcentration', 'Hours'])
     data= pd.concat([ctrl_data, muta_data_ordered], axis= 0)
     
+    #format control label
+    data= data.assign(Strain= np.where(data.Strain== 'wt control', 'WT', data.Strain))
+    
     return data
 
 #in case the machine misses a timepoint/s (corresponding timepoint/s from other repeats dropped as well)
@@ -121,7 +125,7 @@ def drop_timepoints(data, start, end):
 
 # * __statistics functions__
 
-# In[1009]:
+# In[454]:
 
 
 #margin of error: t-distribution, CL 95%, confidence intervals: mean +/- margin of error
@@ -187,9 +191,9 @@ def exp_phase_slopes(data, as_concentration, timepoint1, timepoint2, p_value_thr
                           slopes= slopes.loc[:, ['slope_repeat1', 'slope_repeat2', 'slope_repeat3']].values.tolist())
     
     #separate control and mutant slope-data
-    ctrl= slopes.loc[slopes.strain== 'wt control']  
+    ctrl= slopes.loc[slopes.strain== 'WT']  
     ctrl.columns= ['strain', 'slope_repeat1', 'slope_repeat2', 'slope_repeat3', 'slope', 'control_slopes']
-    mut= slopes.loc[slopes.strain!= 'wt control']
+    mut= slopes.loc[slopes.strain!= 'WT']
     
     #merge the control data to each mutant
     final_dataset= mut.merge(ctrl.loc[:, 'control_slopes'], how= 'left', left_index= True, right_index= True)
@@ -228,9 +232,9 @@ def stat_phase_OD(data, as_concentration, timepoint, p_value_threshold):
     data=data.assign(OD600= data.OD600.apply(lambda x: np.where(np.isnan(np.array(x)), np.mean(np.array(x)[~np.isnan(np.array(x))]),np.array(x))))
     
     #split control and mutant data
-    ctrl= data.loc[data.Strain=='wt control']
+    ctrl= data.loc[data.Strain=='WT']
     ctrl.columns= ['Strain', 'Hours', 'OD600_control']
-    mut= data.loc[data.Strain!='wt control']
+    mut= data.loc[data.Strain!='WT']
     
     #average the OD600 from the repeats
     #assign control data to each mutant
@@ -253,12 +257,15 @@ def stat_phase_OD(data, as_concentration, timepoint, p_value_threshold):
     #concat control and mutant data- final dataset
     final_dataset= pd.concat([ctrl, mut], axis= 0)
     
+    #unify column labels (with slopes)
+    final_dataset.columns= ['strain', 'OD', 'p_value', 'significance']
+    
     return final_dataset.reset_index(drop= True)
 
 
 # * __visualisation__
 
-# In[1011]:
+# In[667]:
 
 
 #visualisation of all technical repeats for each strain-condition (for single biological repeat)
@@ -333,7 +340,7 @@ def individual_repeats_visualisation(data, export):
         
     #export
     if export== True:
-        plt.savefig(r"C:\Users\Jakub\Desktop\bioscreen_individ_fig.png", dpi= 1000)
+        plt.savefig(r"...\bioscreen_individ_fig.png", dpi= 1000)
     elif export== False:
         pass;
     else:
@@ -364,7 +371,7 @@ def growth_curves(data, as_concentration, export):
     
     #export
     if export== True:
-        plt.savefig(r"C:\Users\Jakub\Desktop\bioscreen_fig.png", dpi= 1000)
+        plt.savefig(r"...\bioscreen_individ_fig.png", dpi= 1000)
     elif export== False:
         pass;
     else:
@@ -396,7 +403,7 @@ def growth_curves_selected_mutants(data, as_concentration, selected_mutants, exp
     
     #export
     if export== True:
-        plt.savefig(r"C:\Users\Jakub\Desktop\bioscreen_fig.png", dpi= 1000)
+        plt.savefig(r"...\bioscreen_individ_fig.png", dpi= 1000)
     elif export== False:
         pass;
     else:
@@ -440,7 +447,235 @@ def growth_curves_highlighted_mutants(data, as_concentration, selected_mutants, 
 
     #export
     if export== True:
-        plt.savefig(r"C:\Users\Jakub\Desktop\bioscreen_fig.png", dpi= 1000)
+        plt.savefig(r"...\bioscreen_individ_fig.png", dpi= 1000)
+    elif export== False:
+        pass;
+    else:
+        raise ValueError(f"Invalid export argument: '{export}'. Expected: boolean ('True' or 'False').")
+
+#growth curves, exponential slopes and stationary OD in a single visual
+#inputs: final, averaged dataset (results of 'final_dataset'), As concentration, start and end timepoint of a range to be used for slope calculation, fit to an exponential phase according to a WT (exp_start, exp_end), single timepoint to compare OD (stationary phase)
+#inputs (cont.): highlight True/False, highlight of the timerange for slopes and single timepoints for OD comparison within the plot, export True/False
+def complete_visualisation(data, as_concentration, exp_start, exp_end, stat_timepoint, p_value_threshold, highlight, export): 
+    fig= plt.figure(figsize= (9.6*2, 7.2), constrained_layout= True)
+    gs= gridspec.GridSpec(ncols= 12, nrows= 1, figure= fig)
+    
+    ax1= fig.add_subplot(gs[0:1, 0:7])
+    ax2= fig.add_subplot(gs[0:1, 7:9])
+    ax3= fig.add_subplot(gs[0:1, 9:11])
+    
+    ###ax1: Growth Curves
+    #highlight selected time range (exponential slopes) and timepoint (stationary OD)
+    if highlight== True:
+        #highlight timerange from which the exponential slopes were calculated from
+        ax1.axvspan(exp_start, exp_end, color='#FEE7CC', alpha=0.25)
+        ax1.axvline(exp_start, color= '#FEE7CC')
+        ax1.axvline(exp_end, color= '#FEE7CC')
+        #highlight timepoint from which the stationary OD was calculated from
+        ax1.axvline(stat_timepoint, color= '#DFE9F5')
+    elif highlight==False:
+        pass
+    else:
+        raise ValueError(f"Invalid 'highlight' argument: '{highlight}'. Expected: boolean ('True' or 'False').")
+    
+    data_for_gc= data.loc[data.AsConcentration== as_concentration]
+    colors= sns.color_palette("tab10", n_colors= len(data_for_gc.Strain.unique()))
+    #plotting
+    for i, strain in enumerate(data_for_gc.Strain.unique()):
+        
+        selected_strain= data_for_gc.loc[data_for_gc.Strain==strain]
+        ax1.plot(selected_strain.Hours,
+                 selected_strain.OD600Mean,
+                 lw= 4,
+                 label= f'{strain}' if strain=='WT' else f'${strain}$',
+                 color= colors[i])
+    
+    ax1.legend(frameon= False, loc= 'upper left')
+    ax1.set_ylim(0, 1.8)
+    ax1.set_xlabel('Time (h)')
+    ax1.set_ylabel('$\mathregular{OD_{600}}$')
+    
+    ###ax2: exponential phase Slopes
+    slope_data= exp_phase_slopes(data= data, as_concentration= as_concentration, timepoint1= exp_start, timepoint2= exp_end, p_value_threshold=p_value_threshold).iloc[:,:-1].set_index('strain')
+    slope_data.columns= ['average\nslope', 'p value']
+    cmap_slope = sns.color_palette(["#FEE7CC"])
+    sns.heatmap(data= slope_data,
+                ax= ax2,
+                cbar= False,
+                annot= True,
+                fmt= '.4f',
+                mask= slope_data > 1000, #arbitrary, for conditional coloring
+                cmap= cmap_slope,
+                linecolor= 'white',
+                linewidths= 2.25)
+    ax2.set_yticklabels(slope_data.index, weight= 'bold', fontsize= 13)
+    ax2.set_xticklabels(slope_data.columns, weight= 'bold', fontsize= 13) 
+    ax2.yaxis.label.set_visible(False)
+    ax2.tick_params(axis='x', bottom=False, top=False)
+    ax2.tick_params(axis='y', left=False, right=False, labelrotation= 0)
+    #mutant labels to italic
+    font_styles= ['normal' if strain== 'WT' else 'italic' for strain in list(slope_data.index)]
+    for label, style in zip(ax2.get_yticklabels(), font_styles):
+        label.set_fontstyle(style)
+    
+    ###ax3: stationary phase OD
+    OD_data= stat_phase_OD(data= data, as_concentration= as_concentration, timepoint= stat_timepoint, p_value_threshold= p_value_threshold).iloc[:,:-1].set_index('strain')
+    OD_data.columns= ['average\nOD', 'p value']
+    cmap_OD = sns.color_palette(["#DFE9F5"])
+    sns.heatmap(data= OD_data,
+                ax= ax3,
+                cbar= False,
+                annot= True,
+                fmt= '.4f',
+                mask= OD_data > 1000, #arbitrary, for conditional coloring
+                cmap= cmap_OD,
+                linecolor= 'white',
+                linewidths= 2.25)
+    ax3.set_yticklabels(OD_data.index, weight= 'bold', fontsize= 13)
+    ax3.set_xticklabels(OD_data.columns, weight= 'bold', fontsize= 13) 
+    ax3.yaxis.label.set_visible(False)
+    ax3.tick_params(axis='x', bottom=False, top=False)
+    ax3.tick_params(axis='y', left=False, right=False, labelrotation= 0)   
+    #mutant labels to italic
+    font_styles= ['normal' if strain== 'WT' else 'italic' for strain in list(OD_data.index)]
+    for label, style in zip(ax3.get_yticklabels(), font_styles):
+        label.set_fontstyle(style)
+   
+    #export
+    if export== True:
+        plt.savefig(r"...\bioscreen_individ_fig.png", dpi= 1000)
+    elif export== False:
+        pass;
+    else:
+        raise ValueError(f"Invalid export argument: '{export}'. Expected: boolean ('True' or 'False').")
+        
+#growth curves, exponential slopes and stationary OD in a single visual, hilhlighted data entries for specific mutants (alpha 1 for selected, alpha 0.1 for the rest)
+#inputs: final, averaged dataset (results of 'final_dataset'), As concentration, start and end timepoint of a range to be used for slope calculation, fit to an exponential phase according to a WT (exp_start, exp_end), single timepoint to compare OD (stationary phase)
+#inputs (cont.): highlight True/False, highlight of the timerange for slopes and single timepoints for OD comparison within the plot, export True/False, list of mutants to be highlighted (excluding WT)
+def complete_visualisation_highlighted_mutants(data, as_concentration, exp_start, exp_end, stat_timepoint, p_value_threshold, highlight, export, selected_mutants): 
+    fig= plt.figure(figsize= (9.6*2, 7.2), constrained_layout= True)
+    gs= gridspec.GridSpec(ncols= 12, nrows= 1, figure= fig)
+    
+    ax1= fig.add_subplot(gs[0:1, 0:7])
+    ax2= fig.add_subplot(gs[0:1, 7:9])
+    ax3= fig.add_subplot(gs[0:1, 9:11])
+    
+    ###ax1: Growth Curves
+    #highlight selected time range (exponential slopes) and timepoint (stationary OD)
+    if highlight== True:
+        #highlight timerange from which the exponential slopes were calculated from
+        ax1.axvspan(exp_start, exp_end, color='#FEE7CC', alpha=0.25)
+        ax1.axvline(exp_start, color= '#FEE7CC')
+        ax1.axvline(exp_end, color= '#FEE7CC')
+        #highlight timepoint from which the stationary OD was calculated from
+        ax1.axvline(stat_timepoint, color= '#DFE9F5')
+    elif highlight==False:
+        pass
+    else:
+        raise ValueError(f"Invalid 'highlight' argument: '{highlight}'. Expected: boolean ('True' or 'False').")
+    
+    data_for_gc= data.loc[data.AsConcentration== as_concentration]
+    colors= sns.color_palette("tab10", n_colors= len(data_for_gc.Strain.unique()))
+    #plotting
+    for i, strain in enumerate(data_for_gc.Strain.unique()):
+        #set lw and apha for selected (+WT) vs. non-selected strains
+        alpha= 1 if strain== 'WT' or strain in selected_mutants else 0.1  
+        lw= 4 if strain== 'WT' or strain in selected_mutants else 1.75
+        
+        selected_strain= data_for_gc.loc[data_for_gc.Strain==strain]
+        ax1.plot(selected_strain.Hours,
+                 selected_strain.OD600Mean,
+                 lw= lw,
+                 alpha= alpha,
+                 label= f'{strain}' if strain=='WT' else f'${strain}$',
+                 color= colors[i])
+    
+    ax1.legend(frameon= False, loc= 'upper left')
+    #lower alpha for non-selected strains in the legend
+    legend= ax1.legend()
+    for label in legend.get_texts():
+        raw_label= label.get_text().rstrip('$').lstrip('$') #get a raw text and remove italics formatting
+        if raw_label in selected_mutants or raw_label== 'WT':  
+            label.set_alpha(1)  
+        else:
+            label.set_alpha(0.1) 
+    ax1.set_ylim(0, 1.8)
+    ax1.set_xlabel('Time (h)')
+    ax1.set_ylabel('$\mathregular{OD_{600}}$')
+    
+    ###ax2: exponential phase Slopes
+    slope_data= exp_phase_slopes(data= data, as_concentration= as_concentration, timepoint1= exp_start, timepoint2= exp_end, p_value_threshold=p_value_threshold).iloc[:,:-1].set_index('strain')
+    slope_data.columns= ['average\nslope', 'p value']
+    cmap_slope = sns.color_palette(["#FEE7CC"])
+    sns.heatmap(data= slope_data,
+                ax= ax2,
+                cbar= False,
+                annot= True,
+                fmt= '.4f',
+                mask= slope_data > 1000, #arbitrary, for conditional coloring
+                cmap= cmap_slope,
+                linecolor= 'white',
+                linewidths= 2.25)
+    ax2.set_yticklabels(slope_data.index, weight= 'bold', fontsize= 13)
+    ax2.set_xticklabels(slope_data.columns, weight= 'bold', fontsize= 13) 
+    ax2.yaxis.label.set_visible(False)
+    ax2.tick_params(axis='x', bottom=False, top=False)
+    ax2.tick_params(axis='y', left=False, right=False, labelrotation= 0)
+    #mutant labels to italic
+    font_styles= ['normal' if strain== 'WT' else 'italic' for strain in list(slope_data.index)]
+    for label, style in zip(ax2.get_yticklabels(), font_styles):
+        label.set_fontstyle(style)
+    #highlight entries for selected mutants
+    for row_index in selected_mutants:
+        row_idx = slope_data.index.get_loc(row_index)  # Get row index from label
+        ncols = slope_data.shape[1]  # Number of columns
+
+        # Draw red rectangle
+        ax2.add_patch(plt.Rectangle(
+                     (0, row_idx),     # x=0, y=row index
+                     ncols, 1,          # width = number of columns, height = 1 row
+                     fill=False,
+                     edgecolor='red',
+                     linewidth=4))
+    
+    ###ax3: stationary phase OD
+    OD_data= stat_phase_OD(data= data, as_concentration= as_concentration, timepoint= stat_timepoint, p_value_threshold= p_value_threshold).iloc[:,:-1].set_index('strain')
+    OD_data.columns= ['average\nOD', 'p value']
+    cmap_OD = sns.color_palette(["#DFE9F5"])
+    sns.heatmap(data= OD_data,
+                ax= ax3,
+                cbar= False,
+                annot= True,
+                fmt= '.4f',
+                mask= OD_data > 1000, #arbitrary, for conditional coloring
+                cmap= cmap_OD,
+                linecolor= 'white',
+                linewidths= 2.25)
+    ax3.set_yticklabels(OD_data.index, weight= 'bold', fontsize= 13)
+    ax3.set_xticklabels(OD_data.columns, weight= 'bold', fontsize= 13) 
+    ax3.yaxis.label.set_visible(False)
+    ax3.tick_params(axis='x', bottom=False, top=False)
+    ax3.tick_params(axis='y', left=False, right=False, labelrotation= 0)   
+    #mutant labels to italic
+    font_styles= ['normal' if strain== 'WT' else 'italic' for strain in list(OD_data.index)]
+    for label, style in zip(ax3.get_yticklabels(), font_styles):
+        label.set_fontstyle(style)
+    #highlight entries for selected mutants
+    for row_index in selected_mutants:
+        row_idx = OD_data.index.get_loc(row_index)  # Get row index from label
+        ncols = OD_data.shape[1]  # Number of columns
+
+        # Draw red rectangle
+        ax3.add_patch(plt.Rectangle(
+                     (0, row_idx),     # x=0, y=row index
+                     ncols, 1,          # width = number of columns, height = 1 row
+                     fill=False,
+                     edgecolor='red',
+                     linewidth=4))
+   
+    #export
+    if export== True:
+        plt.savefig(r"...\bioscreen_individ_fig.png", dpi= 1000)
     elif export== False:
         pass;
     else:
