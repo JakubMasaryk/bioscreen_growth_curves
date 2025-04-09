@@ -122,6 +122,10 @@ def drop_timepoints(data, start, end):
                    (data.Hours>end)]
     return data
 
+#exports selected dataset to the specified path
+def export_to_csv(dataset, path):
+    dataset.to_csv(path)
+
 
 # * __statistics functions__
 
