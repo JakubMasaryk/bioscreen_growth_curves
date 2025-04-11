@@ -365,7 +365,7 @@ def growth_curves(data, as_concentration, export):
         ax.plot(selected_strain.Hours,
                 selected_strain.OD600Mean,
                 lw= 4,
-                label= f'{strain}' if strain=='wt control' else f'${strain}$',
+                label= f'{strain}' if strain=='WT' else f'${strain}$',
                 color= colors[i])
     
     ax.legend(frameon= False)
@@ -375,7 +375,7 @@ def growth_curves(data, as_concentration, export):
     
     #export
     if export== True:
-        plt.savefig(r"...\bioscreen_individ_fig.png", dpi= 1000)
+        plt.savefig(r"C:\Users\Jakub\Desktop\bioscreen_fig.png", dpi= 1000)
     elif export== False:
         pass;
     else:
@@ -387,7 +387,7 @@ def growth_curves_selected_mutants(data, as_concentration, selected_mutants, exp
     
     fig, ax= plt.subplots(figsize= (9.6, 7.2))
     data= data.loc[(data.AsConcentration== as_concentration)&
-                   ((data.Strain == 'wt control') | (data.Strain.isin(selected_mutants)))]
+                   ((data.Strain == 'WT') | (data.Strain.isin(selected_mutants)))]
     colors= sns.color_palette("tab10", n_colors= len(data.Strain.unique()))
     
     #plotting
@@ -397,7 +397,7 @@ def growth_curves_selected_mutants(data, as_concentration, selected_mutants, exp
         ax.plot(selected_strain.Hours,
                 selected_strain.OD600Mean,
                 lw= 4,
-                label= f'{strain}' if strain=='wt control' else f'${strain}$',
+                label= f'{strain}' if strain=='WT' else f'${strain}$',
                 color= colors[i])
     
     ax.legend(frameon= False)
@@ -407,7 +407,7 @@ def growth_curves_selected_mutants(data, as_concentration, selected_mutants, exp
     
     #export
     if export== True:
-        plt.savefig(r"...\bioscreen_individ_fig.png", dpi= 1000)
+        plt.savefig(r"C:\Users\Jakub\Desktop\bioscreen_fig.png", dpi= 1000)
     elif export== False:
         pass;
     else:
@@ -424,15 +424,15 @@ def growth_curves_highlighted_mutants(data, as_concentration, selected_mutants, 
     #plotting
     for i, strain in enumerate(data.Strain.unique()):
         
-        alpha= 1 if strain== 'wt control' or strain in selected_mutants else 0.1  
-        lw= 4 if strain== 'wt control' or strain in selected_mutants else 1.75
+        alpha= 1 if strain== 'WT' or strain in selected_mutants else 0.1  
+        lw= 4 if strain== 'WT' or strain in selected_mutants else 1.75
         
         selected_strain= data.loc[data.Strain==strain]
         ax.plot(selected_strain.Hours,
                 selected_strain.OD600Mean,
                 lw= lw,
                 alpha= alpha,
-                label= f'{strain}' if strain=='wt control' else f'${strain}$',
+                label= f'{strain}' if strain=='WT' else f'${strain}$',
                 color= colors[i])
     
     ax.legend(frameon= False)
@@ -444,18 +444,19 @@ def growth_curves_highlighted_mutants(data, as_concentration, selected_mutants, 
     legend= ax.legend()
     for label in legend.get_texts():
         raw_label= label.get_text().rstrip('$').lstrip('$') #get a raw text and remove italics formatting
-        if raw_label in selected_mutants or raw_label== 'wt control':  
+        if raw_label in selected_mutants or raw_label== 'WT':  
             label.set_alpha(1)  
         else:
             label.set_alpha(0.1)  
 
     #export
     if export== True:
-        plt.savefig(r"...\bioscreen_individ_fig.png", dpi= 1000)
+        plt.savefig(r"C:\Users\Jakub\Desktop\bioscreen_fig.png", dpi= 1000)
     elif export== False:
         pass;
     else:
         raise ValueError(f"Invalid export argument: '{export}'. Expected: boolean ('True' or 'False').")
+
 
 #growth curves, exponential slopes and stationary OD in a single visual
 #inputs: final, averaged dataset (results of 'final_dataset'), As concentration, start and end timepoint of a range to be used for slope calculation, fit to an exponential phase according to a WT (exp_start, exp_end), single timepoint to compare OD (stationary phase)
