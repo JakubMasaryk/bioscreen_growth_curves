@@ -1,6 +1,3 @@
-# In[447]:
-
-
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -11,31 +8,18 @@ from scipy.stats import ttest_ind
 
 
 # __Params__
-
-# In[449]:
-
-
 plt.rcParams["legend.frameon"] = False
 plt.rcParams['legend.fontsize'] = 15
-
 plt.rcParams['axes.labelsize'] = 20
 plt.rcParams['axes.labelweight'] = 'bold'
-
 plt.rcParams['xtick.labelsize'] = 18
 plt.rcParams['ytick.labelsize'] = 18  
-
 plt.rcParams['font.size'] = 16
-
 plt.rcParams['figure.dpi'] = 1000
 
 
 # __Functions__
-
 # * __data processing__
-
-# In[452]:
-
-
 #data load (from specified path) and basic processing
 #data: data export form Bioscreen machines, plate_layot: description of well-strain-condition-technical repeat
 #inputs: path to dataset and plate layout
@@ -128,10 +112,6 @@ def export_to_csv(dataset, path):
 
 
 # * __statistics functions__
-
-# In[454]:
-
-
 #margin of error: t-distribution, CL 95%, confidence intervals: mean +/- margin of error
 #input: list of OD600 values from individual biological replicates (for a single timepoint)
 def t_margin_of_error_cl95(data):
@@ -220,9 +200,81 @@ def exp_phase_slopes(data, as_concentration, timepoint1, timepoint2, p_value_thr
     
     return final_dataset.reset_index(drop= True)
 
+#calculates slopes and y-intercepts for each growth curve within defined timerange, each biological repeat and ttest against wt control
+#applied on the exponential phase, app. 10-20 h of growth
+def exp_phase_slopes_intercepts(data, as_concentration, start, end):  
+    #filter by timpoints, select needed columns
+    data= data.loc[(data.Hours >= start) & 
+                   (data.Hours <= end) &
+                   (data.AsConcentration == as_concentration),
+                   ['Strain', 'Hours', 'OD600']]
+    
+    #split the repeats to a separate columns
+    data= data.assign(rep1= data.OD600.apply(lambda x: x[0]),
+                      rep2= data.OD600.apply(lambda x: x[1]),
+                      rep3= data.OD600.apply(lambda x: x[2]))
+    
+    #empty dataframe for slopes (m) and y-intercepts (y) (from basic formula y=mx+b)
+    slopes_intercepts= pd.DataFrame(columns= ['strain', 'm_rep1', 'b_rep1', 'm_rep2', 'b_rep2', 'm_rep3', 'b_rep3'])
+    
+    #calculate slope and y-intercept for each strain-repeat, append to the 'slope' df
+    for strain in data.Strain.unique():
+        mb_data = data[data.Strain== strain]     
+        x=  np.array((mb_data.Hours).astype('float32'))
+            
+        try:   
+            y1= np.array((mb_data.rep1).astype('float32'))
+            slope1, intercept1 = np.polyfit(x, y1, 1)
+        except Exception as e:
+            slope1= np.NaN
+            intercept1= np.NaN
+            print(f'slope and y-intercept not calculated for: {strain}-repeat 1 (replaced with NaN)\nerror: {e}')
+        
+        try:    
+            y2= np.array((mb_data.rep2).astype('float32'))
+            slope2, intercept2 = np.polyfit(x, y2, 1)
+        except Exception as e:
+            slope2= np.NaN
+            intercept2= np.NaN
+            print(f'slope and y-intercept not calculated for: {strain}-repeat 2 (replaced with NaN)\nerror: {e}')
+        
+        try:    
+            y3= np.array((mb_data.rep3).astype('float32'))
+            slope3, intercept3 = np.polyfit(x, y3, 1)
+        except Exception as e:
+            slope3= np.NaN
+            intercept3= np.NaN
+            print(f'slope and y-intercept not calculated for: {strain}-repeat 3 (replaced with NaN)\nerror: {e}')
 
-# median_value = np.nanmedian(a)
-# a_filled = np.where(np.isnan(a), median_value, a)
+        new_row= pd.DataFrame([{'strain':strain, 'm_rep1':slope1, 'b_rep1':intercept1, 'm_rep2':slope2, 'b_rep2':intercept2, 'm_rep3':slope3, 'b_rep3':intercept3}])   
+        slopes_intercepts= pd.concat([slopes_intercepts, new_row], axis= 0)
+    
+    ##statistics
+    #concat slopes into lists (input into ttest function), average slopes and intercepts
+    slopes_intercepts= slopes_intercepts.assign(average_y_int= slopes_intercepts.loc[:, ['b_rep1', 'b_rep2', 'b_rep3']].mean(axis= 1),
+                                                average_slope= slopes_intercepts.loc[:, ['m_rep1', 'm_rep2', 'm_rep3']].mean(axis= 1),
+                                                slopes= slopes_intercepts.loc[:, ['m_rep1', 'm_rep2', 'm_rep3']].values.tolist())
+    
+    #remove unnecessary columns
+    slopes_intercepts=slopes_intercepts.loc[:, ['strain', 'average_y_int', 'average_slope', 'slopes']]
+    
+    #drop potential NaNs from the value lists
+    slopes_intercepts= slopes_intercepts.assign(slopes= slopes_intercepts.slopes.apply(lambda x: [val for val in x if not np.isnan(val)]))
+    
+    #extract control slopes (list)
+    ctrl_slopes= slopes_intercepts.loc[slopes_intercepts.strain== 'WT', 'slopes']  
+    ctrl_slopes= ctrl_slopes.rename('ctrl_slopes')
+    
+    #merge a control (WT) to every strain
+    slopes_intercepts= slopes_intercepts.merge(ctrl_slopes, how= 'cross')
+    
+    #t-test (control vs mutant)
+    slopes_intercepts= slopes_intercepts.assign(p_value_slope= round(slopes_intercepts.apply(lambda x: single_t_test(x['slopes'], x['ctrl_slopes']), axis= 1), 6))
+    
+    #filter down to essential columns
+    slopes_intercepts= slopes_intercepts.loc[:, ['strain', 'average_y_int', 'average_slope', 'p_value_slope']]
+    
+    return slopes_intercepts
 
 #compares OD wt control vs. mutant in a selected timepoint (ttest, 3 repeats)
 #applied on a timepoint in the stationary phase, app. 48h
@@ -268,10 +320,6 @@ def stat_phase_OD(data, as_concentration, timepoint, p_value_threshold):
 
 
 # * __visualisation__
-
-# In[667]:
-
-
 #visualisation of all technical repeats for each strain-condition (for single biological repeat)
 #inputs: individual biological repeat dataset (result of individual_repeats_data_processing)
 def individual_repeats_visualisation(data, export):
